@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv
 from .transformer import TransformerBlock
 
-__all__ = ('DFL', 'HGBlock', 'HGStem', 'SPP', 'SPPF', 'C1', 'C2', 'C3', 'C2f', 'C2fAttn', 'C3x', 'C3TR', 'C3Ghost',
+__all__ = ('DFL', 'HGBlock', 'HGStem', 'SPP', 'SPPF', 'C1', 'C2', 'C3', 'C2f', 'C3x', 'C3TR', 'C3Ghost',
            'GhostBottleneck', 'Bottleneck', 'BottleneckCSP', 'Proto', 'RepC3')
 
 
@@ -281,54 +281,7 @@ class Bottleneck(nn.Module):
     def forward(self, x):
         """'forward()' applies the YOLOv5 FPN to input data."""
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
-class MaxSigmoidAttnBlock(nn.Module):
-    """Max Sigmoid attention block."""
 
-    def __init__(self, c1, c2, nh=1, ec=128, gc=512, scale=False):
-        """Initializes MaxSigmoidAttnBlock with specified arguments."""
-        super().__init__()
-        self.nh = nh
-        self.hc = c2 // nh
-        self.ec = Conv(c1, ec, k=1, act=False) if c1 != ec else None
-        self.gl = nn.Linear(gc, ec)
-        self.bias = nn.Parameter(torch.zeros(nh))
-        self.proj_conv = Conv(c1, c2, k=3, s=1, act=False)
-        self.scale = nn.Parameter(torch.ones(1, nh, 1, 1)) if scale else 1.0
-
-    def forward(self, x, guide):
-        """Forward process."""
-        bs, _, h, w = x.shape
-
-        guide = self.gl(guide)
-        guide = guide.view(bs, -1, self.nh, self.hc)
-        embed = self.ec(x) if self.ec is not None else x
-        embed = embed.view(bs, self.nh, self.hc, h, w)
-
-        aw = torch.einsum("bmchw,bnmc->bmhwn", embed, guide)
-        aw = aw.max(dim=-1)[0]
-        aw = aw / (self.hc**0.5)
-        aw = aw + self.bias[None, :, None, None]
-        aw = aw.sigmoid() * self.scale
-
-        x = self.proj_conv(x)
-        x = x.view(bs, self.nh, -1, h, w)
-        x = x * aw.unsqueeze(2)
-        return x.view(bs, -1, h, w)
-
-
-class C2fAttn(nn.Module):
-    """C2f module with an additional attn module."""
-
-    def __init__(self, c1, c2, n=1, ec=128, nh=1, gc=512, shortcut=False, g=1, e=0.5):
-        """Initialize CSP bottleneck layer with two convolutions with arguments ch_in, ch_out, number, shortcut, groups,
-        expansion.
-        """
-        super().__init__()
-        self.c = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((3 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
-        self.attn = MaxSigmoidAttnBlock(self.c, self.c, gc=gc, ec=ec, nh=nh)
 
 class BottleneckCSP(nn.Module):
     """CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks."""
